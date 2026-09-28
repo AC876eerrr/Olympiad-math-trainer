@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytics — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+  <h1>Analytics</h1>
+
+  <section>
+    <h2>Overview</h2>
+    <div class="grid">
+      <div class="card stat"><div class="stat" id="aSolved">—</div><div>Problems solved</div></div>
+      <div class="card stat"><div class="stat" id="aAcc">—</div><div>Overall accuracy</div></div>
+      <div class="card stat"><div class="stat" id="aStreak">—</div><div>Day streak</div></div>
+      <div class="card stat"><div class="stat" id="aXp">—</div><div>XP</div></div>
+      <div class="card stat"><div class="stat" id="aCash">—</div><div>Math Cash</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Accuracy by topic</h2>
+    <div class="card" id="topicBars"><p>Loading…</p></div>
+  </section>
+
+  <section>
+    <h2>Accuracy by contest</h2>
+    <div class="card" id="contestBars"><p>Loading…</p></div>
+  </section>
+
+  <section>
+    <h2>Coach's note</h2>
+    <div class="card" id="coachNote"><p>Loading…</p></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+const $ = id => document.getElementById(id);
+const TOPIC_LABELS = { algebra: 'Algebra', geometry: 'Geometry', number_theory: 'Number Theory', combinatorics: 'Combinatorics' };
+
+function showAlert(msg){
+  const d = $('alert'); d.innerHTML = '';
+  const p = document.createElement('p'); p.className = 'alert-error'; p.textContent = msg;
+  d.appendChild(p);
+}
+
+function barRow(label, solved, correct){
+  const row = document.createElement('div');
+  row.style.marginBottom = '0.75em';
+  const acc = solved > 0 ? Math.round(correct / solved * 100) : 0;
+  const head = document.createElement('div');
+  const name = document.createElement('strong'); name.textContent = label;
+  const meta = document.createElement('span');
+  meta.textContent = ` ${acc}% · ${correct}/${solved} correct`;
+  head.append(name, meta);
+  const track = document.createElement('div');
+  track.style.background = '#e5e7eb'; track.style.borderRadius = '4px'; track.style.height = '12px';
+  const fill = document.createElement('div');
+  fill.style.width = acc + '%'; fill.style.height = '100%'; fill.style.borderRadius = '4px';
+  fill.style.background = acc >= 70 ? '#16a34a' : acc >= 40 ? '#d97706' : '#dc2626';
+  track.appendChild(fill);
+  row.append(head, track);
+  return row;
+}
+
+async function init(){
+  try {
+    const a = await App.api('GET', '/api/analytics');
+    $('aSolved').textContent = a.totals?.solved ?? 0;
+    const acc = a.totals?.accuracy;
+    $('aAcc').textContent = (acc != null ? Math.round(acc) : (a.totals?.solved ? Math.round(a.totals.correct / a.totals.solved * 100) : 0)) + '%';
+    $('aStreak').textContent = (a.streakDays ?? 0) + 'd';
+    $('aXp').textContent = a.xp ?? 0;
+    $('aCash').textContent = a.mathCash ?? 0;
+
+    const tb = $('topicBars'); tb.innerHTML = '';
+    const topics = a.byTopic || {};
+    const order = ['algebra', 'geometry', 'number_theory', 'combinatorics'];
+    let anyTopic = false;
+    for (const t of order){
+      if (!topics[t]) continue;
+      anyTopic = true;
+      tb.appendChild(barRow(TOPIC_LABELS[t] || t, topics[t].solved || 0, topics[t].correct || 0));
+    }
+    if (!anyTopic) tb.innerHTML = '<p>No topic data yet — solve some drills to see your breakdown.</p>';
+
+    const cb = $('contestBars'); cb.innerHTML = '';
+    const contests = a.byContest || {};
+    let anyContest = false;
+    for (const c of Object.keys(contests)){
+      anyContest = true;
+      cb.appendChild(barRow(c, contests[c].solved || 0, contests[c].correct || 0));
+    }
+    if (!anyContest) cb.innerHTML = '<p>No contest data yet.</p>';
+
+    // coach's note: strongest vs weakest topic with at least one attempt
+    const note = $('coachNote'); note.innerHTML = '';
+    const p = document.createElement('p');
+    const scored = order.filter(t => topics[t] && topics[t].solved > 0)
+      .map(t => ({ t, acc: topics[t].correct / topics[t].solved }));
+    if (!scored.length){
+      p.textContent = 'Solve problems in Drills or Mock mode and your personalized coaching note will appear here.';
+    } else {
+      scored.sort((x, y) => y.acc - x.acc);
+      const best = scored[0], worst = scored[scored.length - 1];
+      if (scored.length === 1){
+        p.textContent = `You've trained ${TOPIC_LABELS[best.t]} at ${Math.round(best.acc * 100)}% accuracy. Branch into other topics to build a full picture.`;
+      } else {
+        p.textContent = `Strongest: ${TOPIC_LABELS[best.t]} (${Math.round(best.acc * 100)}%). Needs work: ${TOPIC_LABELS[worst.t]} (${Math.round(worst.acc * 100)}%). ` +
+          `Consider drilling ${TOPIC_LABELS[worst.t]} next — that's where the fastest gains are.`;
+      }
+    }
+    note.appendChild(p);
+  } catch(e){
+    showAlert(e.message || 'Could not load analytics.');
+    $('topicBars').innerHTML = ''; $('contestBars').innerHTML = ''; $('coachNote').innerHTML = '';
+  }
+}
+
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+init();
+</script>
+</body>
+</html>

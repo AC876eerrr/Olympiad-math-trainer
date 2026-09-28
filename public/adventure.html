@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adventure — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+  <h1>Math Adventure</h1>
+
+  <!-- START / CONTINUE -->
+  <section id="startView" class="card" style="display:none">
+    <h2>Chapter 1: The Problem Eater</h2>
+    <p>Deep beneath the contest hall sleeps <strong>Gorg the Grinder</strong>, a beast that devours
+    unsolved problems. Your weapons are algebra, geometry, number theory, and combinatorics.
+    Each correct answer strikes the boss. Each wrong answer lets it strike back. You carry
+    <strong>3 potions</strong> — use them wisely.</p>
+    <p id="continueRow" style="display:none">
+      <button class="btn btn-primary" id="continueBtn">Continue adventure</button>
+    </p>
+    <p><button class="btn" id="newBtn">New adventure</button></p>
+  </section>
+
+  <!-- BATTLE -->
+  <section id="battleView" style="display:none">
+    <div class="grid">
+      <div class="card">
+        <h3 id="bossName">Boss</h3>
+        <p>HP: <span id="bossHpText"></span></p>
+        <div style="background:#e5e7eb;border-radius:4px;height:16px">
+          <div id="bossBar" class="hp-bar" style="background:#dc2626;height:100%;border-radius:4px;width:100%"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>You</h3>
+        <p>HP: <span id="playerHpText"></span></p>
+        <div style="background:#e5e7eb;border-radius:4px;height:16px">
+          <div id="playerBar" class="hp-bar" style="background:#16a34a;height:100%;border-radius:4px;width:100%"></div>
+        </div>
+        <p>XP: <strong id="pXp">0</strong> · Math Cash: <strong id="pCash">0</strong> · Potions: <strong id="pPotions">0</strong></p>
+        <p><button class="btn btn-small" id="potionBtn">Drink potion (+40 HP)</button></p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Battle round</h3>
+      <p><span class="badge" id="bContest"></span> <span class="badge" id="bDiff"></span></p>
+      <div id="bStatement"><p>Loading problem…</p></div>
+      <div id="bAnswerArea" style="margin-top:1em"></div>
+      <p><button class="btn btn-primary" id="attackBtn">Attack!</button></p>
+      <div id="bFeedback"></div>
+    </div>
+
+    <div class="card">
+      <h3>Battle log</h3>
+      <div id="battleLog"></div>
+    </div>
+  </section>
+
+  <!-- VICTORY / DEFEAT -->
+  <section id="endView" class="card" style="display:none">
+    <h2 id="endTitle"></h2>
+    <p id="endText"></p>
+    <p><button class="btn btn-primary" id="runBtn">New run</button></p>
+  </section>
+
+  <!-- LOCKED CHAPTERS -->
+  <section>
+    <h2>Chapters</h2>
+    <div class="grid" id="chapterGrid"></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+const $ = id => document.getElementById(id);
+
+const CHAPTERS = [
+  { n: 1, title: 'The Problem Eater', desc: 'Face Gorg the Grinder beneath the contest hall.', locked: false },
+  { n: 2, title: 'The Silent Library', desc: 'Pro required — coming in a future update.', locked: true },
+  { n: 3, title: 'The Clockwork Tower', desc: 'Pro required — coming in a future update.', locked: true },
+  { n: 4, title: 'The Fractal Deep', desc: 'Pro required — coming in a future update.', locked: true },
+  { n: 5, title: 'The Prime Citadel', desc: 'Pro required — coming in a future update.', locked: true },
+  { n: 6, title: 'The Final Proof', desc: 'Pro required — coming in a future update.', locked: true },
+];
+
+let state = null;          // server state shape
+let problem = null;        // current battle problem
+let pending = { xp: 0, cash: 0 };  // rewards earned since last save
+let runTotals = { xp: 0, cash: 0 }; // rewards earned this run (for victory screen)
+let meUser = null;         // cached from App.me()
+
+function showAlert(msg, ok){
+  const d = $('alert'); d.innerHTML = '';
+  if (!msg) return;
+  const p = document.createElement('p');
+  p.className = ok ? 'alert-ok' : 'alert-error';
+  p.textContent = msg; d.appendChild(p);
+}
+function isProLocked(e){
+  let data = null;
+  try { data = JSON.parse(e.message); } catch(_){}
+  return (data && data.error === 'pro_locked') || /pro_locked/i.test(String(e.message || ''));
+}
+function normalize(s){ return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function grade(p, userRaw){
+  if (p.choices && p.choices.length){
+    const letter = normalize(userRaw);
+    const i = letter.charCodeAt(0) - 97;
+    const ct = (i >= 0 && i < p.choices.length) ? p.choices[i] : null;
+    return normalize(p.answer) === letter || (ct != null && normalize(ct) === normalize(p.answer));
+  }
+  if (p.contest === 'AIME'){
+    const u = Number(String(userRaw).trim()), a = Number(String(p.answer).trim());
+    return Number.isFinite(u) && Number.isFinite(a) && u === a;
+  }
+  return normalize(userRaw) === normalize(p.answer);
+}
+
+function freshState(){
+  return { chapter: 1, playerHp: 100, playerMaxHp: 100,
+           bossHp: 150, bossMaxHp: 150, bossName: 'Gorg the Grinder',
+           potions: 3, log: ['You enter the cavern. Gorg the Grinder lumbers toward you!'], currentProblemId: null };
+}
+
+function renderChapters(){
+  const g = $('chapterGrid'); g.innerHTML = '';
+  for (const c of CHAPTERS){
+    const card = document.createElement('div');
+    card.className = 'card' + (c.locked ? ' locked' : '');
+    const h = document.createElement('h3');
+    h.textContent = (c.locked ? '🔒 ' : '') + `Chapter ${c.n}: ${c.title}`;
+    const p = document.createElement('p'); p.textContent = c.desc;
+    card.append(h, p);
+    if (c.locked){
+      const a = document.createElement('a'); a.href = '/billing.html';
+      a.className = 'btn btn-gold btn-small'; a.textContent = 'Go Pro';
+      card.appendChild(a);
+    }
+    g.appendChild(card);
+  }
+}
+
+function renderBars(){
+  const bp = Math.max(0, state.bossHp / state.bossMaxHp * 100);
+  const pp = Math.max(0, state.playerHp / state.playerMaxHp * 100);
+  $('bossBar').style.width = bp + '%';
+  $('playerBar').style.width = pp + '%';
+  $('bossHpText').textContent = `${Math.max(0, state.bossHp)} / ${state.bossMaxHp}`;
+  $('playerHpText').textContent = `${Math.max(0, state.playerHp)} / ${state.playerMaxHp}`;
+  $('bossName').textContent = state.bossName;
+  $('pPotions').textContent = state.potions;
+  if (meUser){ $('pXp').textContent = meUser.xp ?? 0; $('pCash').textContent = meUser.mathCash ?? 0; }
+}
+function renderLog(){
+  const log = $('battleLog'); log.innerHTML = '';
+  state.log.slice(-10).forEach(entry => {
+    const p = document.createElement('p'); p.textContent = entry;
+    log.appendChild(p);
+  });
+}
+function log(msg){
+  state.log.push(msg);
+  if (state.log.length > 50) state.log = state.log.slice(-50);
+  renderLog();
+}
+
+// deterministic free-range problem id (ids 1..499), advanced per round
+function nextId(){
+  const base = (state.log.length * 37 + 11) % 499;
+  return base + 1;
+}
+
+async function loadProblem(){
+  $('bStatement').innerHTML = '<p>Loading problem…</p>';
+  $('bAnswerArea').innerHTML = '';
+  problem = null;
+  let id = state.currentProblemId || nextId();
+  for (let tries = 0; tries < 6; tries++){
+    try {
+      const r = await App.api('GET', '/api/problem/' + id);
+      problem = r.problem;
+      state.currentProblemId = id;
+      break;
+    } catch(e){
+      if (isProLocked(e)){ showAlert('This battle problem requires Pro — picking another…', false); }
+      id = (id % 499) + 1; // advance and retry
+    }
+  }
+  if (!problem){ $('bStatement').innerHTML = '<p>Could not load a battle problem.</p>'; return; }
+  $('bContest').textContent = problem.contest;
+  $('bDiff').textContent = 'Difficulty ' + problem.difficulty;
+  const st = $('bStatement'); st.innerHTML = '';
+  const p = document.createElement('p'); p.textContent = problem.statement;
+  st.appendChild(p);
+  const area = $('bAnswerArea');
+  if (problem.choices && problem.choices.length){
+    problem.choices.forEach((c, i) => {
+      const letter = String.fromCharCode(65 + i);
+      const lab = document.createElement('label'); lab.style.display = 'block';
+      const r = document.createElement('input');
+      r.type = 'radio'; r.name = 'bchoice'; r.value = letter;
+      lab.append(r, document.createTextNode(' ' + letter + '. ' + c));
+      area.appendChild(lab);
+    });
+  } else {
+    const inp = document.createElement('input');
+    inp.className = 'input'; inp.id = 'bText';
+    inp.placeholder = problem.contest === 'AIME' ? 'Integer 0–999' : 'Your answer';
+    area.appendChild(inp);
+  }
+}
+
+async function save(){
+  try {
+    const r = await App.api('POST', '/api/adventure', { state, rewards: pending });
+    pending = { xp: 0, cash: 0 };
+    return r;
+  } catch(e){ showAlert('Could not save adventure: ' + (e.message || 'error'), false); return null; }
+}
+
+function showBattle(){
+  $('startView').style.display = 'none';
+  $('endView').style.display = 'none';
+  $('battleView').style.display = '';
+  renderBars(); renderLog();
+}
+
+$('attackBtn').addEventListener('click', async () => {
+  if (!problem || !state) return;
+  let userRaw = '';
+  if (problem.choices && problem.choices.length){
+    const sel = document.querySelector('input[name="bchoice"]:checked');
+    if (!sel){ showAlert('Choose an answer to attack.', false); return; }
+    userRaw = sel.value;
+  } else {
+    userRaw = ($('bText') || {}).value || '';
+    if (!userRaw.trim()){ showAlert('Type an answer to attack.', false); return; }
+  }
+  const correct = grade(problem, userRaw);
+  const fb = $('bFeedback'); fb.innerHTML = '';
+  if (correct){
+    const dmg = 10 + problem.difficulty;
+    const xp = 5 + problem.difficulty, cash = 2 + Math.floor(problem.difficulty / 2);
+    state.bossHp = Math.max(0, state.bossHp - dmg);
+    pending.xp += xp; pending.cash += cash;
+    runTotals.xp += xp; runTotals.cash += cash;
+    log(`Correct! You strike ${state.bossName} for ${dmg} damage (+${xp} XP, +${cash} Math Cash).`);
+    const p = document.createElement('p'); p.className = 'alert-ok';
+    p.textContent = `Direct hit! ${dmg} damage dealt.`;
+    fb.appendChild(p);
+  } else {
+    const dmg = 8 + Math.floor(problem.difficulty / 3);
+    state.playerHp = Math.max(0, state.playerHp - dmg);
+    log(`Wrong — the answer was ${problem.answer}. ${state.bossName} hits you for ${dmg} damage.`);
+    const p = document.createElement('p'); p.className = 'alert-error';
+    p.textContent = `Miss! The answer was ${problem.answer}. You take ${dmg} damage.`;
+    fb.appendChild(p);
+  }
+  state.currentProblemId = null; // next round draws a fresh problem
+  await save();
+  renderBars();
+  if (state.bossHp <= 0) return endRun(true);
+  if (state.playerHp <= 0) return endRun(false);
+  await loadProblem();
+});
+
+$('potionBtn').addEventListener('click', async () => {
+  if (!state || state.potions <= 0){ showAlert('No potions left!', false); return; }
+  if (state.playerHp >= state.playerMaxHp){ showAlert('HP is already full.', true); return; }
+  state.potions--;
+  state.playerHp = Math.min(state.playerMaxHp, state.playerHp + 40);
+  log('You drink a potion and recover 40 HP.');
+  await save();
+  renderBars();
+});
+
+function endRun(won){
+  $('battleView').style.display = 'none';
+  $('endView').style.display = '';
+  if (won){
+    $('endTitle').textContent = 'Victory! ' + state.bossName + ' is defeated.';
+    $('endText').textContent =
+      `The cavern falls silent. This run earned you ${runTotals.xp} XP and ${runTotals.cash} Math Cash. ` +
+      'Start a new run to face the beast again.';
+    state = null;
+    App.api('POST', '/api/adventure', { state: freshState(), rewards: { xp: 0, cash: 0 } }).catch(() => {});
+  } else {
+    $('endTitle').textContent = 'Defeated…';
+    $('endText').textContent = 'Gorg the Grinder stands over you. Train harder and challenge it again.';
+  }
+}
+
+async function startNew(){
+  state = freshState();
+  pending = { xp: 0, cash: 0 };
+  runTotals = { xp: 0, cash: 0 };
+  await save();
+  showBattle();
+  await loadProblem();
+}
+
+$('newBtn').addEventListener('click', startNew);
+$('runBtn').addEventListener('click', () => { $('endView').style.display = 'none'; startNew(); });
+$('continueBtn').addEventListener('click', async () => {
+  pending = { xp: 0, cash: 0 };
+  runTotals = { xp: 0, cash: 0 };
+  showBattle();
+  await loadProblem();
+});
+
+async function init(){
+  renderChapters();
+  try { meUser = (await App.me()).user || null; } catch(e){ meUser = null; }
+  try {
+    const r = await App.api('GET', '/api/adventure');
+    const s = r && r.state;
+    if (s && s.bossHp > 0 && s.playerHp > 0){
+      state = s;
+      $('startView').style.display = '';
+      $('continueRow').style.display = '';
+    } else {
+      $('startView').style.display = '';
+    }
+  } catch(e){
+    $('startView').style.display = '';
+    showAlert(e.message || 'Could not load adventure.', false);
+  }
+}
+
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+init();
+</script>
+</body>
+</html>

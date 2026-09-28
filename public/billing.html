@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Billing — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+  <h1>Billing</h1>
+
+  <section class="card" id="statusCard">
+    <p>Loading…</p>
+  </section>
+
+  <section class="card" id="plansCard" style="display:none">
+    <h2>Go Pro</h2>
+    <ul>
+      <li>Full problem bank: difficulties 15–20 and the complete archive</li>
+      <li>All 50 toolkit methods unlocked</li>
+      <li>Future adventure chapters as they release</li>
+    </ul>
+    <div class="grid">
+      <div class="card">
+        <h3>Monthly</h3>
+        <p><strong>$8</strong> / month</p>
+        <p><button class="btn btn-gold" data-plan="monthly">Choose Monthly</button></p>
+      </div>
+      <div class="card">
+        <h3>Annual</h3>
+        <p><strong>$60</strong> / year <span class="badge">save 37%</span></p>
+        <p><button class="btn btn-gold" data-plan="annual">Choose Annual</button></p>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+const $ = id => document.getElementById(id);
+
+function showAlert(msg, ok){
+  const d = $('alert'); d.innerHTML = '';
+  if (!msg) return;
+  const p = document.createElement('p');
+  p.className = ok ? 'alert-ok' : 'alert-error';
+  p.textContent = msg; d.appendChild(p);
+}
+
+function renderStatus(s){
+  const card = $('statusCard'); card.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = 'Current plan';
+  const p = document.createElement('p');
+  if (s.isPro){
+    const badge = document.createElement('span');
+    badge.className = 'badge badge-pro'; badge.textContent = 'Pro';
+    p.append(badge, document.createTextNode(' ' + (s.plan ? `· ${s.plan} plan` : '· active')));
+    const note = document.createElement('p');
+    note.textContent = 'To manage or cancel billing, contact the site owner.';
+    card.append(h, p, note);
+    $('plansCard').style.display = 'none';
+  } else {
+    const badge = document.createElement('span');
+    badge.className = 'badge'; badge.textContent = 'Free';
+    p.appendChild(badge);
+    card.append(h, p);
+    if (s.billingConfigured){
+      $('plansCard').style.display = '';
+    } else {
+      const note = document.createElement('p');
+      note.textContent = 'Online checkout is coming soon — contact the site owner to upgrade.';
+      card.appendChild(note);
+      $('plansCard').style.display = 'none';
+    }
+  }
+}
+
+async function checkout(plan, btn){
+  btn.disabled = true;
+  const old = btn.textContent; btn.textContent = 'Redirecting…';
+  try {
+    const r = await App.api('POST', '/api/billing/checkout', { plan });
+    if (r && r.url){ window.location.href = r.url; return; }
+    showAlert('Checkout did not return a payment link. Please try again.', false);
+  } catch(e){
+    const m = String(e.message || '');
+    if (/billing_not_configured/i.test(m)){
+      showAlert('Online checkout is coming soon — contact the site owner to upgrade.', false);
+      renderStatus({ isPro: false, plan: null, billingConfigured: false });
+    } else {
+      showAlert(m || 'Checkout failed.', false);
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+async function init(){
+  const q = new URLSearchParams(window.location.search);
+  if (q.get('success') === '1') showAlert('Payment successful! Your Pro status is activating — refreshing…', true);
+  if (q.get('canceled') === '1') showAlert('Checkout was canceled. No charge was made.', false);
+  try {
+    const s = await App.api('GET', '/api/billing/status');
+    renderStatus(s || {});
+  } catch(e){
+    $('statusCard').innerHTML = '<p>Could not load billing status.</p>';
+    showAlert(e.message || 'Could not load billing status.', false);
+  }
+  document.querySelectorAll('[data-plan]').forEach(btn => {
+    btn.addEventListener('click', () => checkout(btn.dataset.plan, btn));
+  });
+}
+
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+init();
+</script>
+</body>
+</html>

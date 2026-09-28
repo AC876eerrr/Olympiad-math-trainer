@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mock Contest — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+
+  <!-- SETUP -->
+  <section id="setupView" class="card">
+    <h1>Mock Contest</h1>
+    <p>Timed exam conditions. Your answers are graded and recorded when you submit.</p>
+    <div class="form">
+      <div>
+        <label class="label" for="mContest">Contest</label>
+        <select class="input" id="mContest">
+          <option>AMC 8</option><option>AMC 10</option><option>AMC 12</option>
+          <option>AIME</option><option>USAJMO</option>
+        </select>
+      </div>
+      <div>
+        <label class="label" for="mCount">Questions</label>
+        <select class="input" id="mCount">
+          <option value="10">10</option><option value="15">15</option><option value="25">25</option>
+        </select>
+      </div>
+    </div>
+    <p><button class="btn btn-primary" id="startBtn">Start mock</button></p>
+    <p id="timeNote"><small></small></p>
+  </section>
+
+  <!-- EXAM -->
+  <section id="examView" style="display:none">
+    <div class="card">
+      <h2 id="examTitle">Mock in progress</h2>
+      <p>Time left: <strong id="timer">--:--</strong></p>
+      <p id="qCounter"></p>
+      <div id="qBody" class="card"></div>
+      <p>
+        <button class="btn btn-small" id="qPrev">← Prev</button>
+        <button class="btn btn-small" id="qNext">Next →</button>
+        <button class="btn btn-primary" id="submitBtn">Submit exam</button>
+      </p>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="resultView" style="display:none">
+    <div class="card">
+      <h1 id="scoreTitle"></h1>
+      <p id="scoreSub"></p>
+      <p><button class="btn" id="againBtn">Take another mock</button></p>
+    </div>
+    <h2>Review</h2>
+    <div id="reviewList"></div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+
+const MIN_PER_Q = { 'AMC 8': 2, 'AMC 10': 3, 'AMC 12': 3, 'AIME': 12, 'USAJMO': 30 };
+const $ = id => document.getElementById(id);
+let questions = [], answers = [], idx = 0, timerId = null, secondsLeft = 0, submitted = false, examContest = '';
+
+function showAlert(msg, ok){
+  const d = $('alert'); d.innerHTML = '';
+  if (!msg) return;
+  const p = document.createElement('p');
+  p.className = ok ? 'alert-ok' : 'alert-error';
+  p.textContent = msg; d.appendChild(p);
+}
+function isProLocked(e){
+  let data = null;
+  try { data = JSON.parse(e.message); } catch(_){}
+  if (data && data.error === 'pro_locked') return true;
+  return /pro_locked/i.test(String(e.message || ''));
+}
+function normalize(s){ return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function grade(p, userRaw){
+  if (p.choices && p.choices.length){
+    const letter = normalize(userRaw);
+    const i = letter.charCodeAt(0) - 97;
+    const ct = (i >= 0 && i < p.choices.length) ? p.choices[i] : null;
+    return normalize(p.answer) === letter || (ct != null && normalize(ct) === normalize(p.answer));
+  }
+  if (p.contest === 'AIME'){
+    const u = Number(String(userRaw).trim()), a = Number(String(p.answer).trim());
+    return Number.isFinite(u) && Number.isFinite(a) && u === a;
+  }
+  return normalize(userRaw) === normalize(p.answer);
+}
+
+function updateTimeNote(){
+  const c = $('mContest').value, n = Number($('mCount').value);
+  const mins = Math.round(n * (MIN_PER_Q[c] || 3));
+  $('timeNote').querySelector('small').textContent =
+    `${n} questions · ${mins} minutes total (${MIN_PER_Q[c] || 3} min/question, ${c} pacing).`;
+}
+$('mContest').addEventListener('change', updateTimeNote);
+$('mCount').addEventListener('change', updateTimeNote);
+updateTimeNote();
+
+$('startBtn').addEventListener('click', async () => {
+  showAlert('', true);
+  const contest = $('mContest').value, count = Number($('mCount').value);
+  examContest = contest;
+  $('startBtn').disabled = true;
+  $('startBtn').textContent = 'Loading…';
+  try {
+    const { user: me } = await App.me();
+    const qp = new URLSearchParams({ contest, limit: '1' });
+    const first = await App.api('GET', '/api/problems?' + qp.toString());
+    const total = first.total || 0;
+    if (!total) throw new Error('No problems available for ' + contest + '.');
+    // random offset so each mock draws a different spread of problems
+    const maxOff = Math.max(0, total - count);
+    const off = Math.floor(Math.random() * (maxOff + 1));
+    const qp2 = new URLSearchParams({ contest, limit: String(count), offset: String(off) });
+    if (me && !me.isPro) qp2.set('maxDiff', '14'); // stay inside the free range
+    const list = await App.api('GET', '/api/problems?' + qp2.toString());
+    const ids = (list.problems || []).map(p => p.id);
+    if (!ids.length) throw new Error('No problems available for ' + contest + '.');
+    // full detail (answers + choices) for each problem; drop Pro-locked ones
+    const full = await Promise.all(ids.map(async id => {
+      try { const r = await App.api('GET', '/api/problem/' + id); return r.problem; }
+      catch(e){ if (isProLocked(e)) return null; throw e; }
+    }));
+    questions = full.filter(Boolean);
+    if (!questions.length) throw new Error('All drawn problems require Pro. Try an easier contest or upgrade.');
+    answers = questions.map(() => '');
+    if (questions.length < count)
+      showAlert(`Only ${questions.length} questions are available on your plan for this draw.`, true);
+    beginExam(contest, questions.length);
+  } catch(e){
+    showAlert(e.message || 'Could not start mock.', false);
+  } finally {
+    $('startBtn').disabled = false;
+    $('startBtn').textContent = 'Start mock';
+  }
+});
+
+function beginExam(contest, n){
+  submitted = false; idx = 0;
+  $('setupView').style.display = 'none';
+  $('resultView').style.display = 'none';
+  $('examView').style.display = '';
+  $('examTitle').textContent = `Mock ${contest} — ${n} questions`;
+  secondsLeft = Math.round(n * (MIN_PER_Q[contest] || 3)) * 60;
+  renderQ(); tick();
+  clearInterval(timerId);
+  timerId = setInterval(tick, 1000);
+}
+
+function fmt(s){
+  s = Math.max(0, s);
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m + ':' + String(sec).padStart(2, '0');
+}
+function tick(){
+  $('timer').textContent = fmt(secondsLeft);
+  if (secondsLeft <= 0){ finish(true); return; }
+  secondsLeft--;
+}
+
+function saveCurrent(){
+  const q = questions[idx];
+  if (!q) return;
+  if (q.choices && q.choices.length){
+    const sel = document.querySelector('input[name="mq"]:checked');
+    answers[idx] = sel ? sel.value : '';
+  } else {
+    answers[idx] = ($('mqText') || {}).value || '';
+  }
+}
+
+function renderQ(){
+  const q = questions[idx];
+  $('qCounter').textContent = `Question ${idx + 1} of ${questions.length}`;
+  const body = $('qBody'); body.innerHTML = '';
+  const meta = document.createElement('p');
+  const b1 = document.createElement('span'); b1.className = 'badge'; b1.textContent = q.contest;
+  const b2 = document.createElement('span'); b2.className = 'badge'; b2.textContent = 'Difficulty ' + q.difficulty;
+  const b3 = document.createElement('span'); b3.className = 'badge'; b3.textContent = q.topic;
+  meta.append(b1, document.createTextNode(' '), b2, document.createTextNode(' '), b3);
+  const st = document.createElement('p'); st.textContent = q.statement;
+  body.append(meta, st);
+  if (q.choices && q.choices.length){
+    q.choices.forEach((c, i) => {
+      const letter = String.fromCharCode(65 + i);
+      const lab = document.createElement('label'); lab.style.display = 'block';
+      const r = document.createElement('input');
+      r.type = 'radio'; r.name = 'mq'; r.value = letter;
+      if (answers[idx] === letter) r.checked = true;
+      lab.append(r, document.createTextNode(' ' + letter + '. ' + c));
+      body.appendChild(lab);
+    });
+  } else {
+    const inp = document.createElement('input');
+    inp.className = 'input'; inp.id = 'mqText'; inp.value = answers[idx] || '';
+    inp.placeholder = q.contest === 'AIME' ? 'Integer 0–999' : 'Your answer';
+    body.appendChild(inp);
+  }
+  $('qPrev').disabled = idx === 0;
+  $('qNext').disabled = idx === questions.length - 1;
+}
+
+$('qPrev').addEventListener('click', () => { saveCurrent(); if (idx > 0){ idx--; renderQ(); } });
+$('qNext').addEventListener('click', () => { saveCurrent(); if (idx < questions.length - 1){ idx++; renderQ(); } });
+
+$('submitBtn').addEventListener('click', () => finish(false));
+
+async function finish(auto){
+  if (submitted) return;
+  submitted = true;
+  clearInterval(timerId);
+  saveCurrent();
+  $('examView').style.display = 'none';
+  $('resultView').style.display = '';
+  if (auto) showAlert("Time's up — your exam was auto-submitted.", true);
+
+  const results = questions.map((q, i) => ({ q, user: answers[i] || '', correct: grade(q, answers[i] || '') }));
+  const nCorrect = results.filter(r => r.correct).length;
+  $('scoreTitle').textContent = `Score: ${nCorrect} / ${questions.length}`;
+  $('scoreSub').textContent = `${Math.round(nCorrect / questions.length * 100)}% · Mock ${examContest}`;
+
+  const rev = $('reviewList'); rev.innerHTML = '';
+  results.forEach((r, i) => {
+    const card = document.createElement('div'); card.className = 'card';
+    const h = document.createElement('h3');
+    h.textContent = `Q${i + 1} — ${r.correct ? 'Correct' : 'Wrong'}`;
+    h.className = r.correct ? 'alert-ok' : 'alert-error';
+    const st = document.createElement('p'); st.textContent = r.q.statement;
+    const ua = document.createElement('p'); ua.textContent = 'Your answer: ' + (r.user === '' ? '—' : r.user);
+    const ca = document.createElement('p'); ca.textContent = 'Correct answer: ' + r.q.answer;
+    card.append(h, st, ua, ca);
+    rev.appendChild(card);
+  });
+
+  // record attempts (best-effort, don't block the review)
+  results.forEach(r => {
+    App.api('POST', '/api/attempt', { problemId: r.q.id, correct: r.correct }).catch(() => {});
+  });
+}
+
+$('againBtn').addEventListener('click', () => {
+  $('resultView').style.display = 'none';
+  $('setupView').style.display = '';
+});
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+</script>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+
+  <section class="card">
+    <h1 id="welcome">Welcome</h1>
+    <p id="emailLine"></p>
+    <p><span id="planBadge" class="badge">Free</span></p>
+    <p>
+      <a href="/billing.html" id="goProBtn" class="btn btn-gold">Go Pro</a>
+      <button class="btn btn-danger" id="logoutBtn2">Logout</button>
+    </p>
+  </section>
+
+  <section>
+    <h2>Your stats</h2>
+    <div class="grid" id="statCards">
+      <div class="card stat"><div class="stat" id="statXp">—</div><div>XP</div></div>
+      <div class="card stat"><div class="stat" id="statCash">—</div><div>Math Cash</div></div>
+      <div class="card stat"><div class="stat" id="statSolved">—</div><div>Problems solved</div></div>
+      <div class="card stat"><div class="stat" id="statStreak">—</div><div>Day streak</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Train</h2>
+    <div class="grid">
+      <a class="card" href="/drills.html"><h3>Drills</h3><p>Filter 12,000 problems by contest, topic, and difficulty. Check answers, read hints and solutions, bookmark and take notes.</p></a>
+      <a class="card" href="/mock.html"><h3>Mock Contests</h3><p>Timed mock exams with AMC, AIME, and USAJMO formats, full review afterwards.</p></a>
+      <a class="card" href="/toolkit.html"><h3>Method Toolkit</h3><p>50 competition methods and tricks, from Vieta jumping to generating functions.</p></a>
+      <a class="card" href="/analytics.html"><h3>Analytics</h3><p>Accuracy by topic and contest, streaks, and your weakest areas.</p></a>
+      <a class="card" href="/adventure.html"><h3>Adventure RPG</h3><p>Battle bosses with math. Every correct answer deals damage.</p></a>
+      <a class="card" href="/billing.html"><h3>Billing</h3><p>Manage your Free or Pro plan.</p></a>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+
+function showAlert(msg, ok){
+  const d = document.getElementById('alert');
+  d.innerHTML = '';
+  const p = document.createElement('p');
+  p.className = ok ? 'alert-ok' : 'alert-error';
+  p.textContent = msg;
+  d.appendChild(p);
+}
+
+async function init(){
+  try {
+    const { user: me } = await App.me();
+    if (me) {
+      document.getElementById('welcome').textContent = 'Welcome, ' + (me.email || 'trainer');
+      document.getElementById('emailLine').textContent = me.email || '';
+      const badge = document.getElementById('planBadge');
+      if (me.isPro) {
+        badge.textContent = 'Pro' + (me.proPlan ? ' · ' + me.proPlan : '');
+        badge.classList.add('badge-pro');
+        document.getElementById('goProBtn').style.display = 'none';
+      }
+      document.getElementById('statXp').textContent = me.xp ?? 0;
+      document.getElementById('statCash').textContent = me.mathCash ?? 0;
+    }
+    const a = await App.api('GET', '/api/analytics');
+    if (a && a.totals) {
+      document.getElementById('statSolved').textContent = a.totals.solved ?? 0;
+      document.getElementById('statStreak').textContent = (a.streakDays ?? 0) + 'd';
+      if (a.xp != null) document.getElementById('statXp').textContent = a.xp;
+      if (a.mathCash != null) document.getElementById('statCash').textContent = a.mathCash;
+    }
+  } catch(e) {
+    showAlert(e.message || 'Could not load dashboard.', false);
+  }
+}
+
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+document.getElementById('logoutBtn2').addEventListener('click', () => App.logout());
+init();
+</script>
+</body>
+</html>

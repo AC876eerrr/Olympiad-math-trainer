@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drills — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+
+  <!-- LIST VIEW -->
+  <section id="listView">
+    <h1>Problem Drills</h1>
+    <div class="card">
+      <div class="form">
+        <div>
+          <label class="label" for="fContest">Contest</label>
+          <select class="input" id="fContest">
+            <option value="">All contests</option>
+            <option>AMC 8</option><option>AMC 10</option><option>AMC 12</option>
+            <option>AIME</option><option>USAJMO</option>
+          </select>
+        </div>
+        <div>
+          <label class="label" for="fTopic">Topic</label>
+          <select class="input" id="fTopic">
+            <option value="">All topics</option>
+            <option value="algebra">Algebra</option>
+            <option value="geometry">Geometry</option>
+            <option value="number_theory">Number Theory</option>
+            <option value="combinatorics">Combinatorics</option>
+          </select>
+        </div>
+        <div>
+          <label class="label" for="fMin">Min difficulty</label>
+          <select class="input" id="fMin"></select>
+        </div>
+        <div>
+          <label class="label" for="fMax">Max difficulty</label>
+          <select class="input" id="fMax"></select>
+        </div>
+      </div>
+      <p><button class="btn btn-primary" id="loadBtn">Load problems</button></p>
+      <p><small>Difficulty 15–20 is a Pro feature. Free accounts train at 11–14.</small></p>
+    </div>
+    <div id="problemList"></div>
+    <div id="pager" style="display:none">
+      <button class="btn btn-small" id="prevBtn">← Prev</button>
+      <span id="pageInfo"></span>
+      <button class="btn btn-small" id="nextBtn">Next →</button>
+    </div>
+  </section>
+
+  <!-- PROBLEM VIEW -->
+  <section id="problemView" style="display:none">
+    <p><button class="btn btn-small" id="backBtn">← Back to list</button></p>
+    <div class="card">
+      <p><span class="badge" id="pContest"></span> <span class="badge" id="pDiff"></span> <span class="badge" id="pTopic"></span></p>
+      <div id="pStatement"></div>
+      <div id="pAnswerArea" style="margin-top:1em"></div>
+      <p>
+        <button class="btn btn-primary" id="checkBtn">Check answer</button>
+        <button class="btn btn-small" id="hintBtn">Hint</button>
+        <button class="btn btn-small" id="solBtn">Solution</button>
+        <button class="btn btn-small" id="bmBtn">Bookmark</button>
+      </p>
+      <div id="pFeedback"></div>
+      <div id="pHint" class="card" style="display:none"></div>
+      <div id="pSolution" class="card" style="display:none"></div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h3>My notes</h3>
+        <textarea class="input" id="noteBox" rows="5" placeholder="Write notes for this problem…"></textarea>
+        <p>
+          <button class="btn btn-small btn-primary" id="noteSave">Save note</button>
+          <button class="btn btn-small btn-danger" id="noteDelete" style="display:none">Delete</button>
+        </p>
+      </div>
+      <div class="card">
+        <h3>Scratchpad</h3>
+        <textarea class="input" id="scratchBox" rows="5" placeholder="Rough work — saved on this device…"></textarea>
+        <p><small>Auto-saved locally per problem.</small></p>
+      </div>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+
+const LIMIT = 20;
+let offset = 0, total = 0, current = null, noteId = null, bookmarked = false, answered = false;
+
+const $ = id => document.getElementById(id);
+
+function showAlert(msg, ok){
+  const d = $('alert'); d.innerHTML = '';
+  const p = document.createElement('p');
+  p.className = ok ? 'alert-ok' : 'alert-error';
+  p.textContent = msg; d.appendChild(p);
+}
+function isProLocked(e){
+  let data = null;
+  try { data = JSON.parse(e.message); } catch(_){}
+  if (data && data.error === 'pro_locked') return data.message || 'Pro required.';
+  const m = String(e.message || '');
+  if (/pro_locked/i.test(m)) return m;
+  if (/pro/i.test(m) && /(locked|upgrade|plan)/i.test(m)) return m;
+  return null;
+}
+function showUpsell(msg){
+  const d = $('alert'); d.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'upsell';
+  const s = document.createElement('span'); s.textContent = (msg || 'This requires Pro. ') + ' ';
+  const a = document.createElement('a'); a.href = '/billing.html';
+  a.className = 'btn btn-gold btn-small'; a.textContent = 'Go Pro';
+  div.append(s, a); d.appendChild(div);
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+async function apiGuard(method, path, body){
+  try { return await App.api(method, path, body); }
+  catch(e){
+    const pl = isProLocked(e);
+    if (pl) { showUpsell(pl); return null; }
+    throw e;
+  }
+}
+
+// difficulty selects
+(function(){
+  for (let d = 11; d <= 20; d++){
+    $('fMin').append(new Option(d, d));
+    $('fMax').append(new Option(d, d));
+  }
+  $('fMin').value = '11'; $('fMax').value = '20';
+})();
+
+function qs(){
+  const p = new URLSearchParams();
+  if ($('fContest').value) p.set('contest', $('fContest').value);
+  if ($('fTopic').value) p.set('topic', $('fTopic').value);
+  p.set('minDiff', $('fMin').value); p.set('maxDiff', $('fMax').value);
+  p.set('offset', String(offset)); p.set('limit', String(LIMIT));
+  return '/api/problems?' + p.toString();
+}
+
+async function loadList(){
+  showAlert('', true); $('alert').innerHTML = '';
+  const list = $('problemList'); list.innerHTML = '<p>Loading…</p>';
+  try {
+    const res = await apiGuard('GET', qs());
+    if (!res) { list.innerHTML = ''; return; }
+    total = res.total || 0;
+    list.innerHTML = '';
+    if (!res.problems.length) list.innerHTML = '<p>No problems match these filters.</p>';
+    for (const p of res.problems){
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.cursor = 'pointer';
+      const meta = document.createElement('p');
+      [ ['#'+p.id,''], [p.contest,'badge'], ['Diff '+p.difficulty,'badge'], [p.topic,'badge'] ].forEach(([t,c])=>{
+        const s = document.createElement('span'); if(c) s.className = c;
+        s.textContent = t + ' '; meta.appendChild(s);
+      });
+      const st = document.createElement('p'); st.textContent = p.statement || '';
+      card.append(meta, st);
+      card.addEventListener('click', () => openProblem(p.id));
+      list.appendChild(card);
+    }
+    const show = total > 0;
+    $('pager').style.display = show ? '' : 'none';
+    $('prevBtn').disabled = offset === 0;
+    $('nextBtn').disabled = offset + LIMIT >= total;
+    $('pageInfo').textContent = total ? `Showing ${offset+1}–${Math.min(offset+LIMIT,total)} of ${total}` : '';
+  } catch(e){ list.innerHTML=''; showAlert(e.message || 'Failed to load problems.', false); }
+}
+
+$('loadBtn').addEventListener('click', () => { offset = 0; loadList(); });
+$('prevBtn').addEventListener('click', () => { offset = Math.max(0, offset - LIMIT); loadList(); });
+$('nextBtn').addEventListener('click', () => { offset += LIMIT; loadList(); });
+
+function normalize(s){ return String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' '); }
+function grade(problem, userRaw){
+  if (problem.choices && problem.choices.length){
+    const letter = normalize(userRaw);
+    const idx = letter.charCodeAt(0) - 97;
+    const choiceText = (idx >= 0 && idx < problem.choices.length) ? problem.choices[idx] : null;
+    if (normalize(problem.answer) === letter) return true;
+    if (choiceText && normalize(choiceText) === normalize(problem.answer)) return true;
+    return false;
+  }
+  if (problem.contest === 'AIME'){
+    const u = Number(String(userRaw).trim()), a = Number(String(problem.answer).trim());
+    return Number.isFinite(u) && Number.isFinite(a) && u === a;
+  }
+  return normalize(userRaw) === normalize(problem.answer);
+}
+
+async function openProblem(id){
+  $('listView').style.display = 'none';
+  $('problemView').style.display = '';
+  ['pFeedback','pHint','pSolution'].forEach(k => { $(k).innerHTML=''; $(k).style.display='none'; });
+  $('pStatement').textContent = 'Loading…';
+  $('pAnswerArea').innerHTML = '';
+  current = null; answered = false; noteId = null; bookmarked = false;
+  try {
+    const res = await apiGuard('GET', '/api/problem/' + id);
+    if (!res) { $('pStatement').textContent = ''; return; }
+    const p = res.problem; current = p;
+    $('pContest').textContent = p.contest;
+    $('pDiff').textContent = 'Difficulty ' + p.difficulty;
+    $('pTopic').textContent = p.topic;
+    $('pStatement').textContent = p.statement;
+    const area = $('pAnswerArea');
+    if (p.choices && p.choices.length){
+      p.choices.forEach((c, i) => {
+        const letter = String.fromCharCode(65 + i);
+        const lab = document.createElement('label');
+        lab.style.display = 'block';
+        const r = document.createElement('input');
+        r.type = 'radio'; r.name = 'choice'; r.value = letter;
+        lab.append(r, document.createTextNode(' ' + letter + '. ' + c));
+        area.appendChild(lab);
+      });
+    } else {
+      const inp = document.createElement('input');
+      inp.className = 'input'; inp.id = 'answerInput';
+      inp.placeholder = p.contest === 'AIME' ? 'Enter integer 0–999' : 'Your answer';
+      area.appendChild(inp);
+    }
+    // bookmark state
+    try {
+      const b = await App.api('GET', '/api/bookmarks');
+      bookmarked = (b.bookmarks || []).some(x => String(x.problemId) === String(id));
+    } catch(_){ bookmarked = false; }
+    renderBm();
+    // notes
+    try {
+      const n = await App.api('GET', '/api/notes');
+      const mine = (n.notes || []).find(x => String(x.problemId) === String(id));
+      if (mine){ noteId = mine.id; $('noteBox').value = mine.body || ''; $('noteDelete').style.display = ''; }
+      else { $('noteBox').value = ''; $('noteDelete').style.display = 'none'; }
+    } catch(_){}
+    // scratchpad
+    $('scratchBox').value = localStorage.getItem('omt-scratch-' + id) || '';
+  } catch(e){ showAlert(e.message || 'Failed to load problem.', false); }
+}
+
+function renderBm(){ $('bmBtn').textContent = bookmarked ? '★ Bookmarked' : 'Bookmark'; }
+
+$('backBtn').addEventListener('click', () => {
+  $('problemView').style.display = 'none';
+  $('listView').style.display = '';
+});
+
+$('checkBtn').addEventListener('click', async () => {
+  if (!current) return;
+  let userRaw = '';
+  if (current.choices && current.choices.length){
+    const sel = document.querySelector('input[name="choice"]:checked');
+    if (!sel){ showAlert('Pick an answer first.', false); return; }
+    userRaw = sel.value;
+  } else {
+    userRaw = ($('answerInput') || {}).value || '';
+    if (!userRaw.trim()){ showAlert('Type an answer first.', false); return; }
+  }
+  const correct = grade(current, userRaw);
+  answered = true;
+  const fb = $('pFeedback'); fb.innerHTML = '';
+  const p = document.createElement('p');
+  p.className = correct ? 'alert-ok' : 'alert-error';
+  p.textContent = correct ? 'Correct! Well done.' : 'Not quite. The answer is: ' + current.answer;
+  fb.appendChild(p);
+  try {
+    const r = await App.api('POST', '/api/attempt', { problemId: current.id, correct });
+    if (r && (r.xp != null)) {
+      const extra = document.createElement('p');
+      const small = document.createElement('small');
+      small.textContent = `XP: ${r.xp} · Math Cash: ${r.mathCash}`;
+      extra.appendChild(small);
+      fb.appendChild(extra);
+    }
+  } catch(e){ /* attempt logging is best-effort */ }
+});
+
+$('hintBtn').addEventListener('click', () => {
+  if (!current) return;
+  const h = $('pHint');
+  h.textContent = current.hint || 'No hint available for this problem.';
+  h.style.display = '';
+});
+
+$('solBtn').addEventListener('click', () => {
+  if (!current) return;
+  const s = $('pSolution');
+  s.textContent = current.solution || 'No solution available for this problem.';
+  s.style.display = '';
+});
+
+$('bmBtn').addEventListener('click', async () => {
+  if (!current) return;
+  try {
+    if (bookmarked) await App.api('DELETE', '/api/bookmarks/' + current.id);
+    else await App.api('POST', '/api/bookmarks', { problemId: current.id });
+    bookmarked = !bookmarked; renderBm();
+  } catch(e){ showAlert(e.message || 'Bookmark failed.', false); }
+});
+
+$('noteSave').addEventListener('click', async () => {
+  if (!current) return;
+  const body = $('noteBox').value;
+  try {
+    if (noteId) await App.api('PUT', '/api/notes/' + noteId, { body });
+    else {
+      const r = await App.api('POST', '/api/notes', { problemId: current.id, body });
+      if (r && r.note) noteId = r.note.id;
+    }
+    $('noteDelete').style.display = body ? '' : 'none';
+    showAlert('Note saved.', true);
+  } catch(e){ showAlert(e.message || 'Could not save note.', false); }
+});
+
+$('noteDelete').addEventListener('click', async () => {
+  if (!noteId) return;
+  try {
+    await App.api('DELETE', '/api/notes/' + noteId);
+    noteId = null; $('noteBox').value = ''; $('noteDelete').style.display = 'none';
+    showAlert('Note deleted.', true);
+  } catch(e){ showAlert(e.message || 'Could not delete note.', false); }
+});
+
+$('scratchBox').addEventListener('input', () => {
+  if (current) localStorage.setItem('omt-scratch-' + current.id, $('scratchBox').value);
+});
+
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+loadList();
+</script>
+</body>
+</html>

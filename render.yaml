@@ -1,0 +1,32 @@
+# Render hosting blueprint — primary documented host (see DEPLOY.md).
+# Apply via the Render dashboard ("New +" → "Blueprint") or `render blueprint launch`.
+services:
+  - type: web
+    name: olympiad-math-trainer
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    disk:
+      name: trainer-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BASE_URL
+        value: https://olympiadmath.xyz
+      - key: DB_PATH
+        value: /data/app.db
+      - key: SESSION_SECRET
+        generateValue: true
+      # Stripe — leave as placeholders; fill in the Render dashboard when ready.
+      # Until set, Pro checkout shows the "coming soon" state instead of crashing.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_ANNUAL
+        sync: false

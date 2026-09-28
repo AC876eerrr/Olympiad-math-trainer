@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign up — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/"><span class="logo">Ω</span> Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a class="nav-link" href="/login.html">Log in</a>
+      <a class="btn btn-primary btn-small" href="/signup.html">Sign up free</a>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+  <form class="form" id="signup-form" novalidate>
+    <div class="card">
+      <h1>Create your account</h1>
+      <p class="sub">Free forever. No credit card required.</p>
+      <div id="pro-banner" class="alert-ok" style="display:none;">You're signing up for <strong>Pro</strong> — you'll pick a plan right after creating your account.</div>
+      <div id="alert" class="alert-error" style="display:none;"></div>
+      <div class="field">
+        <label class="label" for="email">Email</label>
+        <input class="input" type="email" id="email" name="email" autocomplete="email" required placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label class="label" for="password">Password</label>
+        <input class="input" type="password" id="password" name="password" autocomplete="new-password" required minlength="8" placeholder="Minimum 8 characters">
+        <div class="hint">At least 8 characters.</div>
+      </div>
+      <button class="btn btn-gold" type="submit" id="submit-btn">Sign up free</button>
+    </div>
+    <p class="form-footer">Already have an account? <a href="/login.html">Log in</a></p>
+  </form>
+</main>
+
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var plan = params.get("plan");
+  if (plan === "pro") {
+    document.getElementById("pro-banner").style.display = "block";
+  }
+
+  var form = document.getElementById("signup-form");
+  var alertBox = document.getElementById("alert");
+  var submitBtn = document.getElementById("submit-btn");
+
+  function showError(msg) {
+    alertBox.textContent = msg;
+    alertBox.style.display = "block";
+  }
+  function clearError() {
+    alertBox.textContent = "";
+    alertBox.style.display = "none";
+  }
+
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    clearError();
+    var email = document.getElementById("email").value.trim();
+    var password = document.getElementById("password").value;
+
+    if (!email || email.indexOf("@") < 0) {
+      showError("Please enter a valid email address.");
+      return;
+    }
+    if (password.length < 8) {
+      showError("Password must be at least 8 characters.");
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spin"></span>Creating account…';
+    try {
+      await window.App.api("POST", "/api/auth/signup", { email: email, password: password });
+      location.href = (plan === "pro") ? "/billing.html" : "/app.html";
+    } catch (err) {
+      showError(err.message);
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Sign up free";
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

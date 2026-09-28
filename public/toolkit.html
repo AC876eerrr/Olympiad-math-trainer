@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Method Toolkit — Olympiad Math Trainer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<nav class="nav">
+  <div class="container">
+    <a class="brand" href="/app.html">Olympiad Math Trainer</a>
+    <div class="nav-links">
+      <a href="/drills.html">Drills</a>
+      <a href="/mock.html">Mock</a>
+      <a href="/toolkit.html">Toolkit</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/adventure.html">Adventure</a>
+      <a href="/billing.html">Billing</a>
+      <button class="btn btn-small" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+</nav>
+<main class="container">
+  <div id="alert"></div>
+
+  <section id="gridView">
+    <h1>Method Toolkit</h1>
+    <p>50 competition methods. <span class="badge">🔒 locked</span> entries need Pro.</p>
+    <div class="grid" id="methodGrid"></div>
+  </section>
+
+  <section id="detailView" style="display:none">
+    <p><button class="btn btn-small" id="backBtn">← Back to toolkit</button></p>
+    <div class="card">
+      <h1 id="mTitle"></h1>
+      <p><span class="badge" id="mCat"></span></p>
+      <div id="mBody"></div>
+    </div>
+  </section>
+</main>
+<script src="/app.js"></script>
+<script>
+App.requireAuth();
+const $ = id => document.getElementById(id);
+
+function showAlert(msg, ok){
+  const d = $('alert'); d.innerHTML = '';
+  if (!msg) return;
+  const p = document.createElement('p');
+  p.className = ok ? 'alert-ok' : 'alert-error';
+  p.textContent = msg; d.appendChild(p);
+}
+function showUpsell(msg){
+  const d = $('alert'); d.innerHTML = '';
+  const div = document.createElement('div'); div.className = 'upsell';
+  const s = document.createElement('span'); s.textContent = (msg || 'This method requires Pro. ') + ' ';
+  const a = document.createElement('a'); a.href = '/billing.html';
+  a.className = 'btn btn-gold btn-small'; a.textContent = 'Go Pro';
+  div.append(s, a); d.appendChild(div);
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function isProLocked(e){
+  let data = null;
+  try { data = JSON.parse(e.message); } catch(_){}
+  if (data && data.error === 'pro_locked') return data.message || 'Pro required.';
+  const m = String(e.message || '');
+  if (/pro_locked/i.test(m)) return m;
+  if (/pro/i.test(m) && /(locked|upgrade|plan)/i.test(m)) return m;
+  return null;
+}
+
+async function loadGrid(){
+  const grid = $('methodGrid');
+  grid.innerHTML = '<p>Loading…</p>';
+  try {
+    const res = await App.api('GET', '/api/toolkit');
+    grid.innerHTML = '';
+    const methods = res.methods || [];
+    if (!methods.length) grid.innerHTML = '<p>No methods found.</p>';
+    for (const m of methods){
+      const card = document.createElement('div');
+      card.className = 'card' + (m.locked ? ' locked' : '');
+      card.style.cursor = m.locked ? 'not-allowed' : 'pointer';
+      const h = document.createElement('h3');
+      h.textContent = (m.locked ? '🔒 ' : '') + m.title;
+      const c = document.createElement('p');
+      const b = document.createElement('span'); b.className = 'badge'; b.textContent = m.category;
+      c.appendChild(b);
+      card.append(h, c);
+      if (m.locked){
+        card.addEventListener('click', () => showUpsell(`"${m.title}" is a Pro method.`));
+      } else {
+        card.addEventListener('click', () => openMethod(m.id));
+      }
+      grid.appendChild(card);
+    }
+  } catch(e){
+    grid.innerHTML = '';
+    showAlert(e.message || 'Could not load toolkit.', false);
+  }
+}
+
+async function openMethod(id){
+  try {
+    const res = await App.api('GET', '/api/toolkit/' + id);
+    const m = res.method;
+    $('gridView').style.display = 'none';
+    $('detailView').style.display = '';
+    $('mTitle').textContent = m.title;
+    $('mCat').textContent = m.category;
+    const body = $('mBody'); body.innerHTML = '';
+    String(m.body || '').split(/\n\s*\n/).forEach(para => {
+      const t = para.trim();
+      if (!t) return;
+      const p = document.createElement('p');
+      p.textContent = t;
+      body.appendChild(p);
+    });
+    window.scrollTo({top:0});
+  } catch(e){
+    const pl = isProLocked(e);
+    if (pl) showUpsell(pl);
+    else showAlert(e.message || 'Could not load method.', false);
+  }
+}
+
+$('backBtn').addEventListener('click', () => {
+  $('detailView').style.display = 'none';
+  $('gridView').style.display = '';
+});
+document.getElementById('logoutBtn').addEventListener('click', () => App.logout());
+loadGrid();
+</script>
+</body>
+</html>
